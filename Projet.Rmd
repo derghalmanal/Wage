@@ -1,0 +1,311 @@
+---
+title: " Income Disparity-USA Bayesian Analysis"
+author: "Taqwa Ben Romdhane"
+        "Khalil Ounis"
+        "Manal Derghal"
+        "Fanny Sammut"
+date: "2025-03-25"
+output: ioslides_presentation:
+  toc: true
+  toc_depth : 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+### 1. Introdcution :
+
+\@ While the gender pay gap is persistent and significant, people of all genders are subject to disparities in pay. Another ongoing discussion in the United States is that of the racial wage gap,[given the disparities in median household income across racial and ethnic groups].Black American households had a median income of 56,490 U.S. dollars in 2023, significantly lower than the median income of white households which stood at 89,050 U.S. dollars in the same year. Wage inequality in the U.S. - statistics & facts. Statistica
+
+A partir d'un échantillon de 534 américains décrits par 11 covariables, nous allons mener une analyse bayésienne de la disparité des revenus de la population aux étas unis.
+
+Dans notre analyse, nous nous concentrons principalement sur l'étude des questions suivantes :
+
+-   Comment les salaires horaires diffèrent-ils entre les hommes et les          femmes ayant des caractéristiques observées similaires ?
+
+-   Disparités de revenus parmi les ethnicités
+-   Disparité des revenues entre les femmes mariées et célibataires
+-   Quels facteurs expliquent les disparités de revenus observées ?
+
+## 2. Table de contenus :
+
+-   Bullet 1
+-   Bullet 2
+-   Bullet 3
+
+## Slide with R Output
+
+```{r}
+# Charger les bibliothèques nécessaires
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(runjags)
+```
+
+```{r cars, echo = TRUE}
+Wage_data = read.csv("C:/Users/DELL/OneDrive/Desktop/Advanced Statistics/Statistique bayésienne/wage_data_project.csv", header=TRUE, sep=",")
+```
+
+
+1. Prétraitement des données
+```{r}
+
+# check the data
+selected_data1 <- Wage_data %>% select(education, south, female, workexp, unionmember, wages)
+selected_data2 <- Wage_data %>% select(age, ethnicity, occupation, sector, married)
+as.data.frame(head(glimpse(selected_data1), n=5))
+as.data.frame(head(glimpse(selected_data2), n=5))
+```
+
+Notre jeu de données Wage_data contient les variables suivantes :
+* education: Années d'études
+* south: Indicateur de la région sud
+* female: Indicateur de genre (0 = Homme, 1 = Femme)
+* workexp: Années d'expérience professionnelle
+* unionmember: Indicateur de membre du syndicat
+* wages: Salaire horaire
+* age: Âge
+* ethnicity: Ethnicité (White, Hispanic, Other)
+* occupation: Occupation (Management, Sales, Clerical, Professional, Service, Other)
+* sector: Secteur d'activité (Manufactoring, Construction, Other)
+* married: Indicateur de statut marital
+
+
+```{r}
+# copy <- Wage_data
+age_bins <- c(18, 25, 39, 54, Inf)
+age_labels <- c("Y18-25", "Y26-39", "Y40-54", "Y55")
+
+# Transformer la variable age en catégories
+Wage_data$age <- cut(Wage_data$age, breaks = age_bins, labels = age_labels, right = FALSE)
+
+# Convertir en factors
+Wage_data[c("south", "female", "unionmember", "ethnicity", "occupation", "sector","married")] <- lapply(Wage_data[c("south", "female", "unionmember", "ethnicity", "occupation", "sector","married")], factor)
+
+```
+
+```{r}
+min(Wage_data$education) # 2
+max(Wage_data$education) # 18
+min(Wage_data$workexp) # 0
+max(Wage_data$workexp)  # 55
+```
+
+2. Analyse descriptive et visualisation
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+### Inférence Bayésienne
+```{r}
+plot_credible_intervals <- function(fit) {
+  # Extract the MCMC samples and the names of the parameters
+  samples <- as.data.frame(fit$mcmc %>% lapply(as_tibble) %>% bind_rows())
+  params <- names(samples)
+
+  # Calculate the 50% and 95% credible intervals for each parameter
+  intervals <- data.frame(param = character(), lower = numeric(), upper = numeric())
+  for (param in params) {
+    est_mean <- mean(samples[[param]])
+    est_median <- median(samples[[param]])
+    ci_50_infCI <- quantile(samples[[param]], probs = 0.25)
+    ci_50_supCI <- quantile(samples[[param]], probs = 0.75)
+    ci_95_infCI <- quantile(samples[[param]], probs = 0.025)
+    ci_95_supCI <- quantile(samples[[param]], probs = 0.975)
+    intervals <- rbind(intervals, data.frame(param = param, est_mean = est_mean, est_median = est_median, ci_50_infCI = ci_50_infCI, ci_50_supCI = ci_50_supCI, ci_95_infCI = ci_95_infCI, ci_95_supCI = ci_95_supCI))
+  }
+
+  # Create a ggplot object
+  p <- ggplot(intervals, aes(y = param)) +
+    theme_classic() +
+    geom_segment(aes(y = param, yend = param, x = ci_95_infCI, xend = ci_95_supCI),
+      color = "red", size = 0.5
+    ) +
+    geom_segment(aes(y = param, yend = param, x = ci_50_infCI, xend = ci_50_supCI),
+      color = "red", size = 1.5
+    ) +
+    geom_point(aes(x = est_mean), size = 3) +
+    labs(title = "Posterior credible intervals") +
+    xlab("") +
+    ylab("")
+
+  # Print the plot
+  print(p)
+}
+
+```
+
+##### Modélisation bayésienne des disparités de salaires par ethnicité
+```{r}
+model_string_ethnicity <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu_ethnic[ethnicity[i]], tau)
+  }
+  for (j in 1:K) {
+    mu_ethnic[j] ~ dnorm(0,10)
+  }
+  tau <- pow(sigma, -2)
+  sigma ~ dunif(0, 100)
+}
+"
+
+data_jags <- list(
+  wages = Wage_data$wages,
+  ethnicity = as.numeric(factor(Wage_data$ethnicity)),
+  N = nrow(Wage_data),
+  K = length(unique(Wage_data$ethnicity))
+)
+
+inits <- function() {
+  list(mu_ethnic = rnorm(length(unique(Wage_data$ethnicity))), sigma = runif(1))
+}
+
+parameters <- c("mu_ethnic", "sigma")
+
+results <- run.jags(model = model_string, data = data_jags, inits = inits, n.chains = 3, burnin = 1000, sample = 5000, monitor = parameters)
+
+cat("Résultats du modèle JAGS pour la variable ethnicity:\n")
+as.data.frame(summary(results))
+```
+
+Ces résultats montrent les estimations des moyennes des salaires par ethnicité (mu_ethnic) et l'écart-type (sigma). Les valeurs de mu_ethnic[3], l'ethnicité "White" sont nettement plus élevées, ce qui indique une disparité significative des salaires pour cette ethnicité par rapport aux autres.
+```{r}
+plot_credible_intervals(results)
+
+```
+
+##### Diagnostic MCMC
+```{r}
+
+```
+
+
+
+##### Modélisation bayésienne des disparités de salaires par genre
+
+
+```{r}
+library(runjags)
+
+model_string <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu_sex[sex[i]], tau)
+  }
+  for (j in 1:2) {
+    mu_sex[j] ~ dnorm(0, 10)
+  }
+  tau <- pow(sigma, -2)
+  sigma ~ dunif(0, 100)
+}
+"
+
+data_jags <- list(
+  wages = Wage_data$wages,
+  sex = as.numeric(factor(Wage_data$female)),
+  N = nrow(Wage_data),
+  K = 2
+)
+
+inits <- function() {
+  list(mu_sex = rnorm(2), sigma = runif(1))
+}
+
+parameters <- c("mu_sex", "sigma")
+
+results_sex <- run.jags(model = model_string, data = data_jags, inits = inits, n.chains = 3, burnin = 1000, sample = 5000, monitor = parameters)
+
+cat("Résultats du modèle JAGS pour la variable sex:\n")
+as.data.frame(summary(results))
+
+```
+```{r}
+plot_credible_intervals(results_sex)
+```
+
+```{r}
+
+```
+
+
+## Régression bayésienne
+
+```{r pressure}
+
+model_string_regression <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu[i], tau)
+    mu[i] <- beta0 + beta1 * education[i] + beta2 * south[i] + beta3 * female[i] + beta4 * workexp[i] + beta5 * unionmember[i] + beta6 * age[i] + beta7 * ethnicity[i] + beta8 * occupation[i] + beta9 * sector[i] + beta10 * married[i]
+  }
+  beta0 ~ dnorm(0, 0.0001)
+  beta1 ~ dnorm(0, 0.0001)
+  beta2 ~ dnorm(0, 0.0001)
+  beta3 ~ dnorm(0, 0.0001)
+  beta4 ~ dnorm(0, 0.0001)
+  beta5 ~ dnorm(0, 0.0001)
+  beta6 ~ dnorm(0, 0.0001)
+  beta7 ~ dnorm(0, 0.0001)
+  beta8 ~ dnorm(0, 0.0001)
+  beta9 ~ dnorm(0, 0.0001)
+  beta10 ~ dnorm(0, 0.0001)
+  tau <- pow(sigma, -2)
+  sigma ~ dunif(0, 100)
+}
+"
+
+data_jags_regression <- list(
+  wages = data$wages,
+  education = data$education,
+  south = as.numeric(data$south),
+  female = as.numeric(data$female),
+  workexp = data$workexp,
+  unionmember = as.numeric(data$unionmember),
+  age = as.numeric(data$age),
+  ethnicity = as.numeric(factor(data$ethnicity)),
+  occupation = as.numeric(factor(data$occupation)),
+  sector = as.numeric(factor(data$sector)),
+  married = as.numeric(data$married),
+  N = nrow(data)
+)
+
+inits_regression <- function() {
+  list(beta0 = rnorm(1), beta1 = rnorm(1), beta2 = rnorm(1), beta3 = rnorm(1), beta4 = rnorm(1), beta5 = rnorm(1), beta6 = rnorm(1), beta7 = rnorm(1), beta8 = rnorm(1), beta9 = rnorm(1), beta10 = rnorm(1), sigma = runif(1))
+}
+
+parameters_regression <- c("beta0", "beta1", "beta2", "beta3", "beta4", "beta5", "beta6", "beta7", "beta8", "beta9", "beta10", "sigma")
+
+results_regression <- run.jags(model = model_string_regression, data = data_jags_regression, inits = inits_regression, n.chains = 3, burnin = 1000, sample = 5000, monitor = parameters_regression)
+
+summary(results_regression)
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+
+```{r}
+
+```
+
+
+
+
