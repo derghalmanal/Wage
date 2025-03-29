@@ -130,7 +130,7 @@ for (var in cat_vars) {
 }
 
 ```
-#Model + MCMC diagnostic
+#Model + MCMC diagnostic (age)
 ```{r}
 # Load libraries
 library(runjags)
@@ -395,8 +395,386 @@ ggplot(posterior_summary_all, aes(x = mean, y = reorder(parameter, mean))) +
 
 ```
 
+#Model + MCMC diagnostic (education)
+```{r}
+# ---- Data prep ----
+Wage_data <- Wage_data %>% filter(wages > 0, education > 0)
+
+data_jags_edu <- list(
+  N = nrow(Wage_data),
+  wages = Wage_data$wages,
+  education = Wage_data$education
+)
+
+# ---- JAGS Model ----
+model_string_edu <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu[i], tau)
+    mu[i] <- beta0 + beta1 * education[i]
+  }
+
+  # Priors (Normal)
+  beta0 ~ dnorm(0, 0.001)
+  beta1 ~ dnorm(0, 0.001)
+
+  # Prior on precision
+  tau ~ dgamma(0.01, 0.01)
+  sigma <- 1 / sqrt(tau)
+}
+"
+
+# ---- Initial values ----
+inits_edu <- function() {
+  list(beta0 = rnorm(1), beta1 = rnorm(1), tau = rgamma(1, 0.01, 0.01))
+}
+
+# ---- Parameters to monitor ----
+monitor_vars <- c("beta0", "beta1", "tau", "sigma")
+
+# ---- Run the model ----
+model_edu <- run.jags(
+  model = model_string_edu,
+  data = data_jags_edu,
+  inits = inits_edu,
+  monitor = monitor_vars,
+  n.chains = 3,
+  adapt = 1000,
+  burnin = 1000,
+  sample = 5000,
+  summarise = TRUE,
+  method = "rjags"
+)
+
+# ---- Step 5: Summarize and extract samples ----
+
+print(summary(model_edu))
+
+mcmc_samples_edu <- as.mcmc.list(model_edu)
+nchains <- length(mcmc_samples_edu)
+
+samples_df_edu <- do.call(rbind, lapply(1:nchains, function(i) {
+  df <- as.data.frame(mcmc_samples_edu[[i]])
+  df$iteration <- 1:nrow(df)
+  df$chain <- factor(paste0("Chain ", i))
+  return(df)
+}))
+
+# ---- Step 6: Traceplots for beta0, beta1, tau, sigma ----
+
+# Parameters to trace
+target_params_edu <- c("beta0", "beta1", "tau", "sigma")
+
+for (param in target_params_edu) {
+  if (param %in% names(samples_df_edu)) {
+    p <- ggplot(samples_df_edu, aes(x = iteration, y = .data[[param]], color = chain)) +
+      geom_line() +
+      labs(title = paste("Traceplot for", param),
+           x = "Iteration", y = "Value") +
+      theme_minimal()
+    print(p)
+  }
+}
 
 
+```
+#Fake Data Check for education
+```{r}
+# ---- Libraries ----
+library(runjags)
+library(coda)
+library(ggplot2)
+library(dplyr)
+
+# ---- Step 1: Simulate Fake Data ----
+
+set.seed(42)
+
+n <- 500
+true_beta0 <- 5
+true_beta1 <- 2
+true_sigma <- 3
+true_tau <- 1 / true_sigma^2
+
+education_fake <- runif(n, 5, 20)  # Simulate education between 5 and 20
+wages_fake <- rnorm(n, mean = true_beta0 + true_beta1 * education_fake, sd = true_sigma)
+
+data_jags_fake <- list(
+  N = n,
+  wages = wages_fake,
+  education = education_fake
+)
+
+# ---- Step 2: Define JAGS Model ----
+
+model_string <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu[i], tau)
+    mu[i] <- beta0 + beta1 * education[i]
+  }
+
+  beta0 ~ dnorm(0, 0.001)
+  beta1 ~ dnorm(0, 0.001)
+  tau ~ dgamma(0.01, 0.01)
+  sigma <- 1 / sqrt(tau)
+}
+"
+
+# ---- Step 3: Run JAGS Model ----
+
+inits <- function() {
+  list(beta0 = rnorm(1), beta1 = rnorm(1), tau = rgamma(1, 1, 1))
+}
+
+monitor_vars <- c("beta0", "beta1", "tau", "sigma")
+
+model_fake <- run.jags(
+  model = model_string,
+  data = data_jags_fake,
+  inits = inits,
+  monitor = monitor_vars,
+  n.chains = 3,
+  adapt = 1000,
+  burnin = 1000,
+  sample = 5000,
+  summarise = FALSE,
+  method = "rjags"
+)
+
+# ---- Step 4: Posterior Summaries ----
+
+posterior_draws <- as.data.frame(do.call(rbind, as.mcmc.list(model_fake)))
+
+true_vals <- c(true_beta0, true_beta1, true_tau, true_sigma)
+params <- c("beta0", "beta1", "tau", "sigma")
+
+posterior_summary <- data.frame(
+  parameter = params,
+  true_value = true_vals,
+  mean = colMeans(posterior_draws[, params]),
+  lower = apply(posterior_draws[, params], 2, quantile, 0.025),
+  upper = apply(posterior_draws[, params], 2, quantile, 0.975)
+)
+
+# ---- Step 5: Plot Posterior vs True ----
+
+ggplot(posterior_summary, aes(x = mean, y = reorder(parameter, mean))) +
+  geom_point(color = "black", size = 3) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.2, color = "red") +
+  labs(title = "Posterior credible intervals for beta0, beta1, tau, sigma (simulated data)",
+       x = "Value", y = NULL) +
+  theme_minimal()
+
+```
+#Model and MCMC diagnostics (occupation)
+```{r}
+library(runjags)
+library(coda)
+library(dplyr)
+library(ggplot2)
+
+# ---- Step 1: Prepare the data ----
+
+Wage_data <- Wage_data %>%
+  filter(!is.na(wages), !is.na(occupation), wages > 0)
+
+Wage_data$occupation <- factor(Wage_data$occupation)
+Wage_data$occ_index <- as.numeric(Wage_data$occupation)
+occupation_levels <- levels(Wage_data$occupation)
+
+# Constants
+N <- nrow(Wage_data)
+K <- length(occupation_levels)
+
+data_jags_occ_fixed <- list(
+  N = N,
+  K = K,
+  wages = Wage_data$wages,
+  occ_index = Wage_data$occ_index
+)
+
+# ---- Step 2: JAGS model ----
+
+model_string_occ_fixed <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu[occ_index[i]], tau)
+  }
+
+  for (k in 1:K) {
+    mu[k] ~ dnorm(50, 1)
+  }
+
+  tau ~ dgamma(0.01, 0.01)
+  sigma <- 1 / sqrt(tau)
+}
+"
+
+# ---- Step 3: MCMC setup ----
+
+# No latent variables → simple inits
+inits_occ <- function() {
+  list(mu = rnorm(K, 50, 10), tau = rgamma(1, 1, 1))
+}
+
+monitor_vars <- c("mu", "tau", "sigma")
+
+model_occ <- run.jags(
+  model = model_string_occ_fixed,
+  data = data_jags_occ_fixed,
+  inits = inits_occ,
+  monitor = monitor_vars,
+  n.chains = 3,
+  adapt = 1000,
+  burnin = 1000,
+  sample = 5000,
+  summarise = TRUE,
+  method = "rjags"
+)
+
+# ---- Step 4: Traceplots & summary ----
+
+print(summary(model_occ))
+
+mcmc_samples_occ <- as.mcmc.list(model_occ)
+
+samples_df_occ <- do.call(rbind, lapply(1:length(mcmc_samples_occ), function(i) {
+  df <- as.data.frame(mcmc_samples_occ[[i]])
+  df$iteration <- 1:nrow(df)
+  df$chain <- factor(paste0("Chain ", i))
+  return(df)
+}))
+
+# ---- Plot traceplots for mu[1:K], tau, and sigma ----
+
+target_params_occ <- c("tau", "sigma")
+
+for (param in target_params_occ) {
+  if (param %in% names(samples_df_occ)) {
+    p <- ggplot(samples_df_occ, aes(x = iteration, y = .data[[param]], color = chain)) +
+      geom_line(alpha = 0.5, linewidth = 0.4) +
+      labs(title = paste("Traceplot for", param),
+           x = "Iteration", y = "Value") +
+      theme_minimal()
+    print(p)
+  }
+}
+
+
+```
+#Fake data check for occupation 
+```{r}
+library(runjags)
+library(coda)
+library(dplyr)
+library(ggplot2)
+
+# ---- Step 1: Simulate Fake Data for 6 Occupation Groups ----
+
+set.seed(42)
+
+# Occupation labels (based on your dataset)
+occupation_labels <- c("Clerical", "Management", "Other", "Professional", "Sales", "Service")
+K <- length(occupation_labels)
+n <- 500
+
+# Set true wage means for each occupation group
+true_mu <- c(30, 60, 40, 70, 25, 35)  # example true means
+
+# Equal occupation proportions or use empirical ones
+true_p <- rep(1 / K, K)
+
+# Simulate occupation assignments
+occ_fake <- sample(1:K, size = n, replace = TRUE, prob = true_p)
+
+# Simulate wages based on group
+true_sigma <- 5
+true_tau <- 1 / true_sigma^2
+wages_fake <- rnorm(n, mean = true_mu[occ_fake], sd = true_sigma)
+
+# Prepare data for JAGS
+data_jags_fake_occ <- list(
+  N = n,
+  K = K,
+  wages = wages_fake,
+  occ_index = occ_fake
+)
+
+# ---- Step 2: JAGS Model ----
+
+model_string_occ <- "
+model {
+  for (i in 1:N) {
+    wages[i] ~ dnorm(mu[occ_index[i]], tau)
+  }
+
+  for (k in 1:K) {
+    mu[k] ~ dnorm(50, 0.001)
+  }
+
+  tau ~ dgamma(0.01, 0.01)
+  sigma <- 1 / sqrt(tau)
+}
+"
+
+inits_occ <- function() {
+  list(mu = rnorm(K, 50, 10), tau = rgamma(1, 1, 1))
+}
+
+monitor_vars <- c("mu", "tau", "sigma")
+
+model_fake_occ <- run.jags(
+  model = model_string_occ,
+  data = data_jags_fake_occ,
+  inits = inits_occ,
+  monitor = monitor_vars,
+  n.chains = 3,
+  adapt = 1000,
+  burnin = 1000,
+  sample = 5000,
+  summarise = FALSE,
+  method = "rjags"
+)
+
+# ---- Step 3: Posterior Summaries ----
+
+posterior_draws <- as.data.frame(do.call(rbind, as.mcmc.list(model_fake_occ)))
+
+mu_cols <- paste0("mu[", 1:K, "]")
+
+posterior_summary_mu <- data.frame(
+  parameter = mu_cols,
+  occupation = occupation_labels,
+  true_value = true_mu,
+  mean = colMeans(posterior_draws[, mu_cols]),
+  lower = apply(posterior_draws[, mu_cols], 2, quantile, 0.025),
+  upper = apply(posterior_draws[, mu_cols], 2, quantile, 0.975)
+)
+
+# Tau and Sigma
+posterior_summary_tau_sigma <- data.frame(
+  parameter = c("tau", "sigma"),
+  occupation = c("τ (precision)", "σ (std dev)"),
+  true_value = c(true_tau, true_sigma),
+  mean = colMeans(posterior_draws[, c("tau", "sigma")]),
+  lower = apply(posterior_draws[, c("tau", "sigma")], 2, quantile, 0.025),
+  upper = apply(posterior_draws[, c("tau", "sigma")], 2, quantile, 0.975)
+)
+
+# Combine all summaries
+posterior_summary_all <- rbind(posterior_summary_mu, posterior_summary_tau_sigma)
+
+# ---- Step 4: Plot ----
+
+ggplot(posterior_summary_all, aes(x = mean, y = reorder(occupation, mean))) +
+  geom_point(color = "black", size = 3) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.25, color = "red") +
+  labs(title = "Posterior credible intervals (fake occupation data)",
+       x = "Value", y = NULL) +
+  theme_minimal()
+
+```
 ##### Modélisation bayésienne des disparités de salaires par genre
 
 
