@@ -4,6 +4,7 @@ author: "Taqwa Ben Romdhane"
         "Khalil Ounis"
         "Manal Derghal"
         "Fanny Sammut"
+        "Alix Madrange"
 date: "2025-03-25"
 output: ioslides_presentation:
   toc: true
@@ -47,7 +48,7 @@ library(runjags)
 ```
 
 ```{r cars, echo = TRUE}
-Wage_data = read.csv("C:/Users/DELL/OneDrive/Desktop/Advanced Statistics/Statistique bayésienne/wage_data_project.csv", header=TRUE, sep=",")
+Wage_data = read.csv("C:/Users/khali/Desktop/Polytech S9/M2DS/Bayesian Stat/Wage/wage_data.csv", header=TRUE, sep=",")
 ```
 
 
@@ -77,11 +78,12 @@ Notre jeu de données Wage_data contient les variables suivantes :
 
 ```{r}
 # copy <- Wage_data
-age_bins <- c(18, 25, 39, 54, Inf)
-age_labels <- c("Y18-25", "Y26-39", "Y40-54", "Y55")
+
+age_bins <- c(18,30, 45, 60, Inf)
+age_labels <- c("Y18-30", "Y30-45", "Y45-60", "Y60+")
 
 # Transformer la variable age en catégories
-Wage_data$age <- cut(Wage_data$age, breaks = age_bins, labels = age_labels, right = FALSE)
+Wage_data$age_group<- cut(Wage_data$age, breaks = age_bins, labels = age_labels, right = FALSE)
 
 # Convertir en factors
 Wage_data[c("south", "female", "unionmember", "ethnicity", "occupation", "sector","married")] <- lapply(Wage_data[c("south", "female", "unionmember", "ethnicity", "occupation", "sector","married")], factor)
@@ -98,95 +100,195 @@ max(Wage_data$workexp)  # 55
 2. Analyse descriptive et visualisation
 
 ```{r}
+# Liste des variables quantitatives
+numeric_vars <- c("education", "workexp", 
+                  "wages","age")
+Wage_data[numeric_vars] <- lapply(Wage_data[numeric_vars], function(x) as.numeric(as.character(x)))
+# Boucle pour afficher les distributions
+for (var in numeric_vars) {
+  print(
+    ggplot(Wage_data, aes_string(x = var)) +
+      geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+      geom_density(color = "darkblue", size = 1) +
+      labs(title = paste("Distribution de la variable :", var),
+           x = var,
+           y = "Densité") +
+      theme_minimal()
+  )
+}
 
-```
+cat_vars <- c("south", "female", "unionmember", "ethnicity", "occupation", "sector", "married", "age_group")
 
-```{r}
-
-```
-
-
-### Inférence Bayésienne
-```{r}
-plot_credible_intervals <- function(fit) {
-  # Extract the MCMC samples and the names of the parameters
-  samples <- as.data.frame(fit$mcmc %>% lapply(as_tibble) %>% bind_rows())
-  params <- names(samples)
-
-  # Calculate the 50% and 95% credible intervals for each parameter
-  intervals <- data.frame(param = character(), lower = numeric(), upper = numeric())
-  for (param in params) {
-    est_mean <- mean(samples[[param]])
-    est_median <- median(samples[[param]])
-    ci_50_infCI <- quantile(samples[[param]], probs = 0.25)
-    ci_50_supCI <- quantile(samples[[param]], probs = 0.75)
-    ci_95_infCI <- quantile(samples[[param]], probs = 0.025)
-    ci_95_supCI <- quantile(samples[[param]], probs = 0.975)
-    intervals <- rbind(intervals, data.frame(param = param, est_mean = est_mean, est_median = est_median, ci_50_infCI = ci_50_infCI, ci_50_supCI = ci_50_supCI, ci_95_infCI = ci_95_infCI, ci_95_supCI = ci_95_supCI))
-  }
-
-  # Create a ggplot object
-  p <- ggplot(intervals, aes(y = param)) +
-    theme_classic() +
-    geom_segment(aes(y = param, yend = param, x = ci_95_infCI, xend = ci_95_supCI),
-      color = "red", size = 0.5
-    ) +
-    geom_segment(aes(y = param, yend = param, x = ci_50_infCI, xend = ci_50_supCI),
-      color = "red", size = 1.5
-    ) +
-    geom_point(aes(x = est_mean), size = 3) +
-    labs(title = "Posterior credible intervals") +
-    xlab("") +
-    ylab("")
-
-  # Print the plot
-  print(p)
+for (var in cat_vars) {
+  print(
+    ggplot(Wage_data, aes_string(x = var)) +
+      geom_bar(fill = "purple") +
+      labs(title = paste("Distribution de la variable :", var),
+           x = var, y = "Effectif") +
+      theme_minimal()
+  )
 }
 
 ```
 
-##### Modélisation bayésienne des disparités de salaires par ethnicité
 ```{r}
-model_string_ethnicity <- "
+# Load libraries
+# Load libraries
+library(runjags)
+library(coda)
+library(ggplot2)
+library(dplyr)
+
+# Prepare data
+age_counts <- table(Wage_data$age_group)
+y <- as.numeric(age_counts)
+n <- sum(y)
+k <- length(y)
+
+# JAGS model
+model_string <- "
 model {
-  for (i in 1:N) {
-    wages[i] ~ dnorm(mu_ethnic[ethnicity[i]], tau)
-  }
-  for (j in 1:K) {
-    mu_ethnic[j] ~ dnorm(0,10)
-  }
-  tau <- pow(sigma, -2)
-  sigma ~ dunif(0, 100)
+  p[1:k] ~ ddirch(alpha[1:k])
+  y[1:k] ~ dmulti(p[1:k], n)
 }
 "
 
-data_jags <- list(
-  wages = Wage_data$wages,
-  ethnicity = as.numeric(factor(Wage_data$ethnicity)),
-  N = nrow(Wage_data),
-  K = length(unique(Wage_data$ethnicity))
+# Dirichlet prior
+alpha <- rep(1, k)
+data_jags <- list(y = y, n = n, k = k, alpha = alpha)
+
+# Run JAGS
+model <- run.jags(
+  model = model_string,
+  data = data_jags,
+  monitor = "p",
+  n.chains = 3,
+  adapt = 1000,
+  burnin = 1000,
+  sample = 5000,
+  summarise = TRUE,
+  method = "rjags"
 )
 
-inits <- function() {
-  list(mu_ethnic = rnorm(length(unique(Wage_data$ethnicity))), sigma = runif(1))
+# Extract MCMC samples
+mcmc_samples <- as.mcmc.list(model)
+nchains <- length(mcmc_samples)
+
+# Combine all chains into one long-format data frame
+samples_df <- do.call(rbind, lapply(1:nchains, function(i) {
+  df <- as.data.frame(mcmc_samples[[i]])
+  df$iteration <- 1:nrow(df)
+  df$chain <- factor(paste0("Chain ", i))
+  return(df)
+}))
+
+# Check actual column names
+print(names(samples_df))  # You'll likely see p.1, p.2, ...
+
+library(rlang)
+
+for (i in 1:k) {
+  param <- paste0("p[", i, "]")
+  
+  # Check if the parameter column exists and is not all NA
+  if (param %in% names(samples_df) && !all(is.na(samples_df[[param]]))) {
+    p <- ggplot(samples_df, aes(x = iteration, y = .data[[param]], color = .data$chain)) +
+      geom_line() +
+      labs(title = paste("Traceplot for", param),
+           x = "Iteration",
+           y = "Sampled value") +
+      theme_minimal()
+    
+    print(p)  # Force plot rendering
+  } else {
+    message(paste("Skipping", param, "- column not found or contains only NA values."))
+  }
 }
 
-parameters <- c("mu_ethnic", "sigma")
-
-results <- run.jags(model = model_string, data = data_jags, inits = inits, n.chains = 3, burnin = 1000, sample = 5000, monitor = parameters)
-
-cat("Résultats du modèle JAGS pour la variable ethnicity:\n")
-as.data.frame(summary(results))
-```
-
-Ces résultats montrent les estimations des moyennes des salaires par ethnicité (mu_ethnic) et l'écart-type (sigma). Les valeurs de mu_ethnic[3], l'ethnicité "White" sont nettement plus élevées, ce qui indique une disparité significative des salaires pour cette ethnicité par rapport aux autres.
-```{r}
-plot_credible_intervals(results)
 
 ```
 
-##### Diagnostic MCMC
+
+#Posterior Check : Predictive Count simulation
 ```{r}
+mcmc_samples <- as.mcmc.list(model)
+
+posterior_draws <- as.data.frame(do.call(rbind, mcmc_samples))
+
+set.seed(123)  # For reproducibility
+
+# Sample one posterior draw
+sample_index <- sample(1:nrow(posterior_draws), 1)
+p_sim <- as.numeric(posterior_draws[sample_index, 1:k])  # First k columns = p[1] to p[k]
+
+# Simulate new counts from multinomial
+y_sim <- rmultinom(1, size = n, prob = p_sim)
+y_sim_vec <- as.numeric(y_sim)
+
+barplot(
+  rbind(Observed = y, Simulated = y_sim_vec),
+  beside = TRUE,
+  col = c("skyblue", "tomato"),
+  legend = TRUE,
+  main = "Posterior Predictive Check: Observed vs Simulated Counts",
+  names.arg = names(age_counts)  # must match number of age groups
+)
+
+
+```
+
+##### Fake data check for age
+```{r}
+true_p <- prop.table(table(Wage_data$age_group))
+k <- length(true_p)
+n <- 500  # sample size
+
+set.seed(42)
+y_fake <- as.numeric(rmultinom(1, size = n, prob = true_p))
+
+alpha <- rep(1, k)  # non-informative prior
+data_jags_fake <- list(y = y_fake, n = n, k = k, alpha = alpha)
+
+model_string <- "
+model {
+  p[1:k] ~ ddirch(alpha[1:k])
+  y[1:k] ~ dmulti(p[1:k], n)
+}
+"
+
+library(runjags)
+
+model_fake <- run.jags(
+  model = model_string,
+  data = data_jags_fake,
+  monitor = "p",
+  n.chains = 3,
+  adapt = 1000,
+  burnin = 1000,
+  sample = 5000,
+  summarise = TRUE,
+  method = "rjags"
+)
+
+posterior_draws <- as.data.frame(do.call(rbind, as.mcmc.list(model_fake)))
+
+posterior_summary <- data.frame(
+  parameter = paste0("p[", 1:k, "]"),
+  true_value = true_p,
+  mean = colMeans(posterior_draws[, 1:k]),
+  lower = apply(posterior_draws[, 1:k], 2, quantile, 0.025),
+  upper = apply(posterior_draws[, 1:k], 2, quantile, 0.975)
+)
+
+library(ggplot2)
+
+ggplot(posterior_summary, aes(x = mean, y = reorder(parameter, mean))) +
+  geom_point(color = "black", size = 3) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.2, color = "red") +
+  labs(title = "Posterior credible intervals ",
+       x = "Value",
+       y = NULL) +
+  theme_minimal()
 
 ```
 
@@ -266,18 +368,18 @@ model {
 "
 
 data_jags_regression <- list(
-  wages = data$wages,
-  education = data$education,
-  south = as.numeric(data$south),
-  female = as.numeric(data$female),
-  workexp = data$workexp,
-  unionmember = as.numeric(data$unionmember),
-  age = as.numeric(data$age),
-  ethnicity = as.numeric(factor(data$ethnicity)),
-  occupation = as.numeric(factor(data$occupation)),
-  sector = as.numeric(factor(data$sector)),
-  married = as.numeric(data$married),
-  N = nrow(data)
+  wages = Wage_data$wages,
+  education = Wage_data$education,
+  south = as.numeric(Wage_data$south),
+  female = as.numeric(Wage_data$female),
+  workexp = Wage_data$workexp,
+  unionmember = as.numeric(Wage_data$unionmember),
+  age = as.numeric(Wage_data$age),
+  ethnicity = as.numeric(factor(Wage_data$ethnicity)),
+  occupation = as.numeric(factor(Wage_data$occupation)),
+  sector = as.numeric(factor(Wage_data$sector)),
+  married = as.numeric(Wage_data$married),
+  N = nrow(Wage_data)
 )
 
 inits_regression <- function() {
